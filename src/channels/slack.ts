@@ -127,7 +127,7 @@ export class SlackChannel implements Channel {
       // (e.g., ^@<ASSISTANT_NAME>\b), so we prepend the trigger when the bot is @mentioned.
       // Skip this for any bot message (ours or another bot's) — only transform human messages.
       let content = msg.text;
-      if (this.botUserId && !isBotMessage) {
+      if (this.botUserId && !isFromMe) {
         const mentionPattern = `<@${this.botUserId}>`;
         if (content.includes(mentionPattern) && !TRIGGER_PATTERN.test(content)) {
           content = `@${ASSISTANT_NAME} ${content}`;

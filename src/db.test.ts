@@ -7,6 +7,7 @@ import {
   getAllChats,
   getMessagesSince,
   getNewMessages,
+  getRecentMessages,
   getTaskById,
   storeChatMetadata,
   storeMessage,
@@ -323,5 +324,74 @@ describe('task CRUD', () => {
 
     deleteTask('task-3');
     expect(getTaskById('task-3')).toBeUndefined();
+  });
+});
+
+// --- getRecentMessages ---
+
+describe('getRecentMessages', () => {
+  it('returns the last N messages for a chat, ordered by timestamp ascending', () => {
+    storeChatMetadata('group@g.us', '2024-01-01T00:00:00.000Z');
+
+    // Store 5 messages
+    for (let i = 1; i <= 5; i++) {
+      store({
+        id: `msg-${i}`,
+        chat_jid: 'group@g.us',
+        sender: '123@s.whatsapp.net',
+        sender_name: 'Alice',
+        content: `Message ${i}`,
+        timestamp: `2024-01-01T00:0${i}:00.000Z`,
+      });
+    }
+
+    // Request last 3
+    const messages = getRecentMessages('group@g.us', 3);
+    expect(messages).toHaveLength(3);
+    // Should be the 3 most recent, in ascending order
+    expect(messages[0].content).toBe('Message 3');
+    expect(messages[1].content).toBe('Message 4');
+    expect(messages[2].content).toBe('Message 5');
+  });
+
+  it('returns all messages when fewer than limit exist', () => {
+    storeChatMetadata('group@g.us', '2024-01-01T00:00:00.000Z');
+
+    store({
+      id: 'msg-1',
+      chat_jid: 'group@g.us',
+      sender: '123@s.whatsapp.net',
+      sender_name: 'Alice',
+      content: 'Only message',
+      timestamp: '2024-01-01T00:01:00.000Z',
+    });
+
+    const messages = getRecentMessages('group@g.us', 50);
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toBe('Only message');
+  });
+
+  it('returns empty array for unknown chat', () => {
+    const messages = getRecentMessages('unknown@g.us', 10);
+    expect(messages).toHaveLength(0);
+  });
+
+  it('includes is_from_me and sender_name fields', () => {
+    storeChatMetadata('group@g.us', '2024-01-01T00:00:00.000Z');
+
+    store({
+      id: 'msg-1',
+      chat_jid: 'group@g.us',
+      sender: '123@s.whatsapp.net',
+      sender_name: 'Bob',
+      content: 'Hello',
+      timestamp: '2024-01-01T00:01:00.000Z',
+      is_from_me: true,
+    });
+
+    const messages = getRecentMessages('group@g.us', 10);
+    expect(messages).toHaveLength(1);
+    expect(messages[0].sender_name).toBe('Bob');
+    expect(messages[0].is_from_me).toBe(1);
   });
 });

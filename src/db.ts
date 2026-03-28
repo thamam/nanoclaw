@@ -288,13 +288,13 @@ export function getNewMessages(
   if (jids.length === 0) return { messages: [], newTimestamp: lastTimestamp };
 
   const placeholders = jids.map(() => '?').join(',');
-  // Filter bot messages using both the is_bot_message flag AND the content
-  // prefix as a backstop for messages written before the migration ran.
+  // Filter own messages using is_from_me flag AND the content
+  // prefix as a backstop for messages written before the flag existed.
   const sql = `
     SELECT id, chat_jid, sender, sender_name, content, timestamp
     FROM messages
     WHERE timestamp > ? AND chat_jid IN (${placeholders})
-      AND is_bot_message = 0 AND content NOT LIKE ?
+      AND is_from_me = 0 AND content NOT LIKE ?
       AND content != '' AND content IS NOT NULL
     ORDER BY timestamp
   `;
@@ -311,18 +311,50 @@ export function getNewMessages(
   return { messages: rows, newTimestamp };
 }
 
+/**
+ * Get the most recent N messages for a chat, ordered by timestamp ascending.
+ * Used to export conversation history for container self-awareness.
+ */
+export function getRecentMessages(
+  chatJid: string,
+  limit: number,
+): Array<{
+  id: string;
+  sender_name: string;
+  content: string;
+  timestamp: string;
+  is_from_me: number;
+}> {
+  const sql = `
+    SELECT id, sender_name, content, timestamp, is_from_me
+    FROM messages
+    WHERE chat_jid = ?
+    ORDER BY timestamp DESC
+    LIMIT ?
+  `;
+  const rows = db.prepare(sql).all(chatJid, limit) as Array<{
+    id: string;
+    sender_name: string;
+    content: string;
+    timestamp: string;
+    is_from_me: number;
+  }>;
+  // Reverse to return in ascending chronological order
+  return rows.reverse();
+}
+
 export function getMessagesSince(
   chatJid: string,
   sinceTimestamp: string,
   botPrefix: string,
 ): NewMessage[] {
-  // Filter bot messages using both the is_bot_message flag AND the content
-  // prefix as a backstop for messages written before the migration ran.
+  // Filter own messages using is_from_me flag AND the content
+  // prefix as a backstop for messages written before the flag existed.
   const sql = `
     SELECT id, chat_jid, sender, sender_name, content, timestamp
     FROM messages
     WHERE chat_jid = ? AND timestamp > ?
-      AND is_bot_message = 0 AND content NOT LIKE ?
+      AND is_from_me = 0 AND content NOT LIKE ?
       AND content != '' AND content IS NOT NULL
     ORDER BY timestamp
   `;
