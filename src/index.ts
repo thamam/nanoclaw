@@ -267,15 +267,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
 
     if (result.status === 'success') {
+      await channel.endMessage?.(chatJid);
       queue.notifyIdle(chatJid);
     }
 
     if (result.status === 'error') {
+      await channel.endMessage?.(chatJid);
       hadError = true;
     }
   });
 
-  await channel.endMessage?.(chatJid);
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
 
