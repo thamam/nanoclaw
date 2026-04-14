@@ -38,7 +38,7 @@ export async function botStatus(
 
   // For nook, also check the LettaBot systemd service
   if (bot.toLowerCase() === 'nook') {
-    const svcResult = await ssh(target, 'systemctl --user status lettabot 2>&1 | head -5');
+    const svcResult = await ssh(target, 'systemctl status lettabot 2>&1 | head -5');
     if (svcResult.exitCode !== 0) {
       lines.push(`\nlettabot service: error checking status\n${svcResult.stderr.trim()}`);
     } else {
@@ -68,7 +68,7 @@ export async function readLogs(
 
   let cmd: string;
   if (service === 'bridge') {
-    cmd = `journalctl --user -u lettabot -n ${lines} --no-pager`;
+    cmd = `journalctl -u lettabot -n ${lines} --no-pager`;
   } else {
     cmd = `docker logs --tail ${lines} ${shellEscape(config.container)} 2>&1`;
   }
