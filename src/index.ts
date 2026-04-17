@@ -70,6 +70,7 @@ import {
   emitChannelStatus,
 } from './telemetry.js';
 import { shouldRespondToGroup } from './smart-trigger.js';
+import { runPreflight } from './preflight.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -197,8 +198,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           content: m.content,
           timestamp: m.timestamp,
         }));
-        const shouldRespond = await shouldRespondToGroup(msgs, ASSISTANT_NAME);
-        if (!shouldRespond) return true;
+        const decision = await shouldRespondToGroup(msgs, ASSISTANT_NAME);
+        if (decision === 'error') {
+          logger.warn(
+            { group: group.name },
+            'smart-trigger: classifier unavailable — degrading to explicit-trigger-only for this message',
+          );
+          return true;
+        }
+        if (decision === 'no') return true;
         logger.info(
           { group: group.name },
           'smart-trigger: LLM classified as should-respond',
@@ -466,11 +474,18 @@ async function startMessageLoop(): Promise<void> {
                   content: m.content,
                   timestamp: m.timestamp,
                 }));
-                const shouldRespond = await shouldRespondToGroup(
+                const decision = await shouldRespondToGroup(
                   msgs,
                   ASSISTANT_NAME,
                 );
-                if (!shouldRespond) continue;
+                if (decision === 'error') {
+                  logger.warn(
+                    { group: group.name },
+                    'smart-trigger: classifier unavailable — degrading to explicit-trigger-only for this message',
+                  );
+                  continue;
+                }
+                if (decision === 'no') continue;
                 logger.info(
                   { group: group.name },
                   'smart-trigger: LLM classified as should-respond',
@@ -548,6 +563,7 @@ async function main(): Promise<void> {
   ensureContainerSystemRunning();
   initDatabase();
   logger.info('Database initialized');
+  await runPreflight();
   loadState();
   restoreRemoteControl();
 
