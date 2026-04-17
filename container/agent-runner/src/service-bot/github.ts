@@ -1,4 +1,5 @@
 // GitHub API layer — abstracts GitHub API calls for testability.
+import { fetchWithKeyFallback } from './api-client.js';
 
 export interface GitHubIssue {
   number: number;
@@ -55,6 +56,7 @@ export type GitHubClient = {
 
 /**
  * Create a real GitHub API client using the provided token.
+ * Includes automatic key fallback on auth failures (401/403).
  */
 export function createGitHubClient(token: string): GitHubClient {
   const headers = {
@@ -64,6 +66,8 @@ export function createGitHubClient(token: string): GitHubClient {
     'User-Agent': 'X-ServiceBot',
   };
 
+  let currentKey: 'alpha' | 'beta' = 'alpha';
+
   return {
     async listIssues(params: ListIssuesParams): Promise<GitHubIssue[]> {
       const url = new URL(
@@ -72,7 +76,15 @@ export function createGitHubClient(token: string): GitHubClient {
       if (params.state) url.searchParams.set('state', params.state);
       if (params.labels) url.searchParams.set('labels', params.labels);
 
-      const res = await fetch(url.toString(), { headers });
+      const res = await fetchWithKeyFallback(url.toString(), {
+        method: 'GET',
+        headers,
+        currentKey,
+        onKeySwitch: async (newKey) => {
+          currentKey = newKey;
+          console.log(`[GitHub] Switched to key '${newKey}'`);
+        },
+      });
 
       if (res.status === 401) {
         throw new Error('GitHub authentication failed. Check GITHUB_TOKEN.');
@@ -103,7 +115,7 @@ export function createGitHubClient(token: string): GitHubClient {
     async createIssue(params: CreateIssueParams): Promise<GitHubIssue> {
       const url = `https://api.github.com/repos/${params.owner}/${params.repo}/issues`;
 
-      const res = await fetch(url, {
+      const res = await fetchWithKeyFallback(url, {
         method: 'POST',
         headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -111,6 +123,11 @@ export function createGitHubClient(token: string): GitHubClient {
           body: params.body,
           labels: params.labels ?? [],
         }),
+        currentKey,
+        onKeySwitch: async (newKey) => {
+          currentKey = newKey;
+          console.log(`[GitHub] Switched to key '${newKey}'`);
+        },
       });
 
       if (res.status === 401) {
@@ -135,10 +152,15 @@ export function createGitHubClient(token: string): GitHubClient {
     async addComment(params: AddCommentParams): Promise<void> {
       const url = `https://api.github.com/repos/${params.owner}/${params.repo}/issues/${params.issueNumber}/comments`;
 
-      const res = await fetch(url, {
+      const res = await fetchWithKeyFallback(url, {
         method: 'POST',
         headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({ body: params.body }),
+        currentKey,
+        onKeySwitch: async (newKey) => {
+          currentKey = newKey;
+          console.log(`[GitHub] Switched to key '${newKey}'`);
+        },
       });
 
       if (res.status === 401) {
@@ -152,10 +174,15 @@ export function createGitHubClient(token: string): GitHubClient {
     async addLabels(params: AddLabelsParams): Promise<void> {
       const url = `https://api.github.com/repos/${params.owner}/${params.repo}/issues/${params.issueNumber}/labels`;
 
-      const res = await fetch(url, {
+      const res = await fetchWithKeyFallback(url, {
         method: 'POST',
         headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({ labels: params.labels }),
+        currentKey,
+        onKeySwitch: async (newKey) => {
+          currentKey = newKey;
+          console.log(`[GitHub] Switched to key '${newKey}'`);
+        },
       });
 
       if (res.status === 401) {
@@ -169,7 +196,15 @@ export function createGitHubClient(token: string): GitHubClient {
     async getIssue(params: GetIssueParams): Promise<GitHubIssue> {
       const url = `https://api.github.com/repos/${params.owner}/${params.repo}/issues/${params.issueNumber}`;
 
-      const res = await fetch(url, { headers });
+      const res = await fetchWithKeyFallback(url, {
+        method: 'GET',
+        headers,
+        currentKey,
+        onKeySwitch: async (newKey) => {
+          currentKey = newKey;
+          console.log(`[GitHub] Switched to key '${newKey}'`);
+        },
+      });
 
       if (res.status === 401) {
         throw new Error('GitHub authentication failed. Check GITHUB_TOKEN.');

@@ -1,3 +1,4 @@
+import { textToSpeech } from './tts.js';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -70,6 +71,7 @@ import {
   emitChannelStatus,
 } from './telemetry.js';
 import { shouldRespondToGroup } from './smart-trigger.js';
+import { runPreflight } from './preflight.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -197,8 +199,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           content: m.content,
           timestamp: m.timestamp,
         }));
-        const shouldRespond = await shouldRespondToGroup(msgs, ASSISTANT_NAME);
-        if (!shouldRespond) return true;
+        const decision = await shouldRespondToGroup(msgs, ASSISTANT_NAME);
+        if (decision === 'error') {
+          logger.warn(
+            { group: group.name },
+            'smart-trigger: classifier unavailable — degrading to explicit-trigger-only for this message',
+          );
+          return true;
+        }
+        if (decision === 'no') return true;
         logger.info(
           { group: group.name },
           'smart-trigger: LLM classified as should-respond',
@@ -246,6 +255,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   await channel.setTyping?.(chatJid, true);
   let hadError = false;
   let outputSentToUser = false;
+  const wasVoiceMessage = missedMessages.some((m) =>
+    m.content.startsWith('[Voice message transcription]'),
+  );
 
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     // Streaming output callback — called for each agent result
@@ -258,7 +270,21 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.length} chars`);
       if (text) {
-        await channel.sendMessage(chatJid, text);
+        // If the user sent a voice message and the channel supports voice replies, TTS the response
+        if (
+          wasVoiceMessage &&
+          channel.sendVoice &&
+          process.env.ELEVENLABS_API_KEY
+        ) {
+          const audioBuffer = await textToSpeech(text);
+          if (audioBuffer) {
+            await channel.sendVoice(chatJid, audioBuffer);
+          } else {
+            await channel.sendMessage(chatJid, text);
+          }
+        } else {
+          await channel.sendMessage(chatJid, text);
+        }
         outputSentToUser = true;
         emitMessageOut(channelType, group.name, text.length);
       }
@@ -464,11 +490,18 @@ async function startMessageLoop(): Promise<void> {
                   content: m.content,
                   timestamp: m.timestamp,
                 }));
-                const shouldRespond = await shouldRespondToGroup(
+                const decision = await shouldRespondToGroup(
                   msgs,
                   ASSISTANT_NAME,
                 );
-                if (!shouldRespond) continue;
+                if (decision === 'error') {
+                  logger.warn(
+                    { group: group.name },
+                    'smart-trigger: classifier unavailable — degrading to explicit-trigger-only for this message',
+                  );
+                  continue;
+                }
+                if (decision === 'no') continue;
                 logger.info(
                   { group: group.name },
                   'smart-trigger: LLM classified as should-respond',
@@ -546,6 +579,7 @@ async function main(): Promise<void> {
   ensureContainerSystemRunning();
   initDatabase();
   logger.info('Database initialized');
+  await runPreflight();
   loadState();
   restoreRemoteControl();
 

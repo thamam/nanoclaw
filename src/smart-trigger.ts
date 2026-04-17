@@ -1,6 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk';
-import { readFileSync } from 'fs';
-import { join } from 'path';
+import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 
 interface GroupMessage {
@@ -9,66 +7,94 @@ interface GroupMessage {
   timestamp: string;
 }
 
-let client: Anthropic | null = null;
+let groqApiKey: string | null = null;
 
-function getClient(): Anthropic {
-  if (client) return client;
-
-  const credsPath = join(process.env.HOME!, '.claude/.credentials.json');
-  const creds = JSON.parse(readFileSync(credsPath, 'utf8'));
-  const token = creds.claudeAiOauth.accessToken;
-
-  client = new Anthropic({ apiKey: token });
-  return client;
+function getGroqKey(): string | null {
+  if (groqApiKey) return groqApiKey;
+  const env = readEnvFile(['GROQ_API_KEY']);
+  groqApiKey = env.GROQ_API_KEY || process.env.GROQ_API_KEY || null;
+  return groqApiKey;
 }
 
 /**
  * LLM-based classification gate for group chats.
- * Uses Claude Haiku via the Anthropic SDK to decide if the bot should
- * respond to recent messages. Authenticates using the host's Max
- * subscription OAuth token from ~/.claude/.credentials.json.
- * Fails closed (returns false) on any error.
+ * Uses Groq (llama-3.1-8b-instant) for fast, cheap YES/NO classification.
+ * Returns 'error' on any failure so callers can distinguish
+ * classifier outage from a genuine NO and log/degrade accordingly.
  */
+export type TriggerDecision = 'yes' | 'no' | 'error';
+
 export async function shouldRespondToGroup(
   messages: GroupMessage[],
   assistantName: string,
-): Promise<boolean> {
+): Promise<TriggerDecision> {
   const recent = messages.slice(-10);
-  if (recent.length === 0) return false;
+  if (recent.length === 0) return 'no';
 
   const userContent = recent.map((m) => `${m.sender}: ${m.content}`).join('\n');
 
-  try {
-    const msg = await getClient().messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 8,
-      system:
-        `You are ${assistantName}, an AI assistant in a group chat. ` +
-        'Decide if you should respond to the recent messages. ' +
-        'Respond YES if: (1) you are being addressed directly or indirectly, ' +
-        '(2) someone is asking a question you can answer, or ' +
-        '(3) you genuinely have something valuable to contribute. ' +
-        "Respond NO if the conversation doesn't involve you and you have " +
-        "nothing meaningful to add. Reply with ONLY 'YES' or 'NO'.",
-      messages: [{ role: 'user', content: userContent }],
-    });
+  const apiKey = getGroqKey();
+  if (!apiKey) {
+    logger.error(
+      'smart-trigger: GROQ_API_KEY not found in .env or environment',
+    );
+    return 'error';
+  }
 
-    const text =
-      msg.content[0].type === 'text' ? msg.content[0].text.trim() : '';
-    const shouldRespond = text.toUpperCase().startsWith('YES');
+  try {
+    const resp = await fetch(
+      'https://api.groq.com/openai/v1/chat/completions',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'llama-3.1-8b-instant',
+          max_tokens: 8,
+          temperature: 0,
+          messages: [
+            {
+              role: 'system',
+              content:
+                `You are ${assistantName}, an AI assistant in a group chat. ` +
+                'Decide if you should respond to the recent messages. ' +
+                'Respond YES if: (1) you are being addressed directly or indirectly, ' +
+                '(2) someone is asking a question you can answer, or ' +
+                '(3) you genuinely have something valuable to contribute. ' +
+                "Respond NO if the conversation doesn't involve you and you have " +
+                "nothing meaningful to add. Reply with ONLY 'YES' or 'NO'.",
+            },
+            { role: 'user', content: userContent },
+          ],
+        }),
+      },
+    );
+
+    if (!resp.ok) {
+      const errorBody = await resp.text();
+      throw new Error(
+        `Groq API ${resp.status}: ${errorBody.substring(0, 200)}`,
+      );
+    }
+
+    const data = (await resp.json()) as {
+      choices: Array<{ message: { content: string } }>;
+    };
+    const text = data.choices?.[0]?.message?.content?.trim() ?? '';
+    const decision: TriggerDecision = text.toUpperCase().startsWith('YES')
+      ? 'yes'
+      : 'no';
 
     logger.info(
-      { response: text, shouldRespond, messageCount: recent.length },
+      { response: text, decision, messageCount: recent.length },
       'smart-trigger: classification result',
     );
 
-    return shouldRespond;
+    return decision;
   } catch (err) {
-    // Invalidate client on auth errors so it re-reads credentials
-    if (err instanceof Anthropic.AuthenticationError) {
-      client = null;
-    }
     logger.error({ err }, 'smart-trigger: classification failed');
-    return false;
+    return 'error';
   }
 }

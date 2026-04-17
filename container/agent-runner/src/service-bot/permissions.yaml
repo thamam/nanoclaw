@@ -1,0 +1,168 @@
+# X bash tool permission policy.
+# Tiers evaluated in order: deny → password → ask → allow. First match wins.
+# Unmatched commands default-deny with reason "no policy match".
+# Pattern syntax: literal prefix match OR glob with "*" wildcard.
+
+# Operator identity — replace with real IDs post-deploy.
+# Replies to `ask`-tier prompts are only honoured from these IDs.
+operator:
+  telegram_user_id: 6452171937
+  slack_user_id: "U0AHMP3F9CM"
+
+# Named passphrases per risk class. Must be typed exactly (case-sensitive).
+passphrases:
+  data-loss: X-DATA-LOSS-CONFIRMED
+  prod-write: X-PROD-WRITE-CONFIRMED
+  self-sudo: X-SELF-SUDO-CONFIRMED
+
+scopes:
+  # Default scope — applied when no per-bot override matches.
+  default:
+    deny:
+      - "rm -rf /"
+      - "rm -rf /*"
+      - "rm -rf /etc*"
+      - "rm -rf /var*"
+      - "rm -rf /usr*"
+      - "rm -rf /home"
+      - "rm -rf /home/*"
+      - "mkfs*"
+      - "dd if=*"
+      - ":(){ :|:& };:"
+      - "chmod -R 777 /"
+      - "chown -R *"
+      # Shell chaining metacharacters — R6.8 enumerated forbidden patterns.
+      # Pipes `|` are intentionally NOT denied globally (legitimate for journalctl | grep etc).
+      # Multi-command chaining via ; && || is denied — use ask/password tiers for legitimate chained work.
+      - "*;*"
+      - "*&&*"
+      - "*||*"
+      # Dangerous pipe sinks (execute arbitrary bytes piped in)
+      - "* | bash*"
+      - "* | sh*"
+      - "* | xargs rm*"
+      - "* | xargs sudo*"
+      # Command substitution
+      - "*$(*"
+      - "*`*"
+    password:
+      - pattern: "rm -rf *"
+        class: data-loss
+      - pattern: "rm -r *"
+        class: data-loss
+      - pattern: "git push*--force*"
+        class: prod-write
+      - pattern: "git push*-f*"
+        class: prod-write
+      - pattern: "git reset --hard*"
+        class: data-loss
+      - pattern: "docker volume rm*"
+        class: data-loss
+      - pattern: "docker system prune*"
+        class: data-loss
+    ask:
+      - "apt install*"
+      - "apt-get install*"
+      - "apt remove*"
+      - "apt-get remove*"
+      - "npm install*"
+      - "pip install*"
+      - "systemctl restart*"
+      - "systemctl --user restart*"
+      - "systemctl start*"
+      - "systemctl --user start*"
+      - "docker build*"
+      - "docker pull*"
+      - "git pull*"
+      - "git fetch*"
+      - "make*"
+    allow:
+      # Mirrors run_command's allowlist as the baseline.
+      - "systemctl --user status*"
+      - "systemctl --user show*"
+      - "systemctl status*"
+      - "journalctl*"
+      - "docker ps*"
+      - "docker logs*"
+      - "docker inspect*"
+      - "docker stats --no-stream*"
+      - "df -h*"
+      - "free -h*"
+      - "uptime*"
+      - "cat *"
+      - "head *"
+      - "tail *"
+      - "ls*"
+      - "stat *"
+      - "wc *"
+      - "du -sh*"
+      - "ps aux*"
+      - "top -bn1*"
+      - "netstat -tlnp*"
+      - "ss -tlnp*"
+      - "curl -s http://localhost*"
+      - "ping -c*"
+      - "npm ls*"
+      - "node -v*"
+      - "npm -v*"
+      - "git log*"
+      - "git status*"
+      - "git diff*"
+      - "git branch*"
+      - "env*"
+      - "printenv*"
+      - "which *"
+      - "hostname*"
+      - "uname*"
+      - "date*"
+      - "whoami*"
+      - "id*"
+      - "echo *"
+      - "pwd*"
+      - "grep *"
+      - "rg *"
+
+  # Self scope — XPS-local. Strictly tighter than default.
+  # Non-overridden tiers fall back to `default`.
+  self:
+    deny:
+      - "rm -rf ~/nanoclaw*"
+      - "rm -rf ~/.claude*"
+      - "rm -rf /home/*/nanoclaw*"
+      - "rm -rf /home/*/.claude*"
+      - "systemctl --user disable nanoclaw*"
+      - "systemctl --user stop nanoclaw*"
+      - "systemctl --user restart nanoclaw*"
+      - "systemctl --user mask nanoclaw*"
+      - "sudo *"
+      - "git reset --hard*"
+      - "git -C *nanoclaw* push*"
+      - "git -C *nanoclaw* reset*"
+      - "git push*"
+      # Shell chaining — self scope declares its own deny list so it does NOT
+      # inherit default.deny. Duplicate the chaining rules here so XPS-local
+      # execution gets the same protection. Keep in sync with default.deny.
+      - "*;*"
+      - "*&&*"
+      - "*||*"
+      - "* | bash*"
+      - "* | sh*"
+      - "* | xargs rm*"
+      - "* | xargs sudo*"
+      - "*$(*"
+      - "*`*"
+
+  # Per-bot overrides. DB runs as root — bias destructive actions to password.
+  db:
+    password:
+      - pattern: "systemctl *stop*"
+        class: prod-write
+      - pattern: "systemctl *restart*"
+        class: prod-write
+      - pattern: "docker *stop*"
+        class: prod-write
+
+  nook:
+    deny:
+      - "docker compose down -v*"
+      - "docker-compose down -v*"

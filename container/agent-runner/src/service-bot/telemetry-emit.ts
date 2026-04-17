@@ -4,11 +4,57 @@ import { getBotConfig } from './config.js';
 
 export interface ServiceAction {
   targetBot: string; // bot name (e.g. "db", "nook")
-  action: string; // e.g. "restart", "config_edit", "log_review", "health_check"
+  action: string; // e.g. "restart", "config_edit", "log_review", "health_check", "bash_command"
   trigger: 'ticket' | 'watcher' | 'manual';
   ticketRef?: string; // GitHub Issue URL if applicable
-  result: 'success' | 'failed';
+  result: 'success' | 'failed' | 'rejected' | 'denied' | 'timed_out' | 'wrong_passphrase';
   summary: string;
+  /** Optional extra structured payload — e.g. bash-tool scope / tier. */
+  extra?: Record<string, unknown>;
+}
+
+export interface BashCommandEvent {
+  scope: string;             // "self" or a bot name
+  tier: string;              // "deny" | "password" | "ask" | "allow" | "default"
+  decision: 'executed' | 'denied' | 'timed_out' | 'wrong_passphrase' | 'rejected';
+  exitCode?: number;
+  commandSnippet: string;    // already truncated by caller
+}
+
+/**
+ * Emit a bash_command telemetry event. This is a thin wrapper over
+ * emitServiceAction that enforces the 200-char command cap at the
+ * telemetry layer. Passphrases are NEVER logged — callers must not
+ * include passphrase text in `commandSnippet`.
+ */
+export async function emitBashCommand(ev: BashCommandEvent): Promise<void> {
+  const snippet = ev.commandSnippet.length > 200
+    ? ev.commandSnippet.slice(0, 200)
+    : ev.commandSnippet;
+
+  const resultMap: Record<BashCommandEvent['decision'], ServiceAction['result']> = {
+    executed: 'success',
+    denied: 'denied',
+    timed_out: 'timed_out',
+    wrong_passphrase: 'wrong_passphrase',
+    rejected: 'rejected',
+  };
+
+  await emitServiceAction({
+    targetBot: ev.scope,
+    action: 'bash_command',
+    trigger: 'manual',
+    result: resultMap[ev.decision],
+    summary: `bash ${ev.decision} [${ev.tier}] on ${ev.scope}: "${snippet}"` +
+      (ev.exitCode !== undefined ? ` — exit ${ev.exitCode}` : ''),
+    extra: {
+      scope: ev.scope,
+      tier: ev.tier,
+      decision: ev.decision,
+      exit_code: ev.exitCode,
+      command: snippet,
+    },
+  });
 }
 
 const TELEMETRY_TIMEOUT_MS = 3000;
@@ -18,6 +64,10 @@ const TELEMETRY_TIMEOUT_MS = 3000;
  * Returns undefined if the bot has no telemetryBotId configured.
  */
 function resolveTargetBotId(botName: string): string | undefined {
+  // "self" scope refers to X's own host — report under X's own telemetry ID.
+  if (botName === 'self') {
+    return process.env.TELEMETRY_BOT_ID;
+  }
   try {
     const config = getBotConfig(botName);
     return config.telemetryBotId;
@@ -61,6 +111,7 @@ export async function emitServiceAction(action: ServiceAction): Promise<void> {
       ticket_ref: action.ticketRef,
       result: action.result,
       summary: action.summary,
+      ...(action.extra ? { extra: action.extra } : {}),
     },
   };
 

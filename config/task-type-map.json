@@ -1,0 +1,53 @@
+{
+  "tiers": {
+    "LITE": "claude-haiku-4-5-20251001",
+    "STANDARD": "claude-sonnet-4-6",
+    "PREMIUM": "claude-opus-4-6"
+  },
+  "taskTypeMap": {
+    "bot_status": "LITE",
+    "read_logs": "LITE",
+    "read_file": "LITE",
+    "list_issues": "LITE",
+    "query_telemetry": "LITE",
+    "get_notices": "LITE",
+    "fleet_status": "LITE",
+    "check_mandate": "LITE",
+    "triage_issue": "LITE",
+    "budget_status": "LITE",
+    "search_logs": "STANDARD",
+    "inspect_config": "STANDARD",
+    "edit_file": "STANDARD",
+    "create_issue": "STANDARD",
+    "docker_command": "STANDARD",
+    "run_command": "STANDARD",
+    "post_notice": "STANDARD",
+    "evaluate_mandate": "STANDARD"
+  },
+  "unmappedDefault": "LITE",
+  "autoClassify": {
+    "keywords": {
+      "LITE": ["check", "status", "list", "show", "read", "get", "query"],
+      "STANDARD": ["diagnose", "fix", "analyze", "search", "debug", "edit", "create", "update"],
+      "PREMIUM": ["architect", "redesign", "comprehensive", "synthesize", "refactor", "audit"]
+    },
+    "lengthThresholds": {
+      "LITE": 80,
+      "STANDARD": 400
+    }
+  },
+  "budgets": {
+    "PREMIUM": {
+      "dailySoftCap": 5,
+      "requireApprovalForAll": true
+    }
+  },
+  "noiseFilter": {
+    "patterns": [
+      "^(thanks|thank you|thx|ty|ok|okay|cool|nice|got it|ack|roger|noted|great|perfect|awesome)\\s*[!.]*$",
+      "^[👍🙏👌✅💯🎉😊]+$",
+      "^\\s*$"
+    ],
+    "cannedResponse": "👍"
+  }
+}

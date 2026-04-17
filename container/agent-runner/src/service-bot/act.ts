@@ -252,6 +252,55 @@ export async function createIssue(
 
 // ─── runCommand ─────────────────────────────────────────────────────────────
 
+/** Allowlisted command prefixes — read-only diagnostic commands only. */
+export const ALLOWED_COMMAND_PREFIXES = [
+  'systemctl --user status',
+  'systemctl --user show',
+  'systemctl status',
+  'journalctl',
+  'docker ps',
+  'docker logs',
+  'docker inspect',
+  'docker stats --no-stream',
+  'df -h',
+  'free -h',
+  'uptime',
+  'cat ',
+  'head ',
+  'tail ',
+  'ls',
+  'stat ',
+  'wc ',
+  'du -sh',
+  'ps aux',
+  'top -bn1',
+  'netstat -tlnp',
+  'ss -tlnp',
+  'curl -s http://localhost',
+  'ping -c',
+  'npm ls',
+  'node -v',
+  'npm -v',
+  'git log',
+  'git status',
+  'git diff',
+  'git branch',
+  'env',
+  'printenv',
+  'which ',
+  'hostname',
+  'uname',
+  'date',
+  'whoami',
+  'id',
+] as const;
+
+/** Shell metacharacters that are never allowed, even in allowlisted commands. */
+const RUN_COMMAND_BLOCKED_CHARS = [';', '|', '&', '$', '`', '\n', '>>', '>', '<', '$('];
+
+/** Maximum timeout in seconds for run_command. */
+const RUN_COMMAND_MAX_TIMEOUT = 60;
+
 export async function runCommand(
   bot: string,
   command: string,
@@ -260,12 +309,56 @@ export async function runCommand(
 ): Promise<string> {
   const config = getBotConfig(bot);
   const target = config.sshTarget;
-  const timeout = options?.timeout ?? 30;
 
+  // Cap timeout to max regardless of caller request
+  const requestedTimeout = options?.timeout ?? 30;
+  const timeout = Math.min(requestedTimeout, RUN_COMMAND_MAX_TIMEOUT);
+
+  // Validate: check for shell metacharacters first (before prefix matching)
+  for (const char of RUN_COMMAND_BLOCKED_CHARS) {
+    if (command.includes(char)) {
+      const displayChar = char === '\n' ? '\\n' : char;
+      emitServiceAction({
+        targetBot: bot,
+        action: 'run_command',
+        trigger: 'manual',
+        result: 'rejected',
+        summary: `Rejected run_command on ${config.name}: shell metacharacter "${displayChar}" in "${command.slice(0, 80)}"`,
+      }).catch(() => {});
+      return `Error: Command rejected — contains dangerous shell metacharacter "${displayChar}". Only simple, single commands are allowed. No pipes, redirects, chaining, or variable expansion.`;
+    }
+  }
+
+  // Validate: command must match an allowed prefix
+  const trimmedCommand = command.trim();
+  const isAllowed = ALLOWED_COMMAND_PREFIXES.some((prefix) => {
+    // Exact match or the command starts with the prefix
+    return trimmedCommand === prefix || trimmedCommand.startsWith(prefix);
+  });
+
+  if (!isAllowed) {
+    emitServiceAction({
+      targetBot: bot,
+      action: 'run_command',
+      trigger: 'manual',
+      result: 'rejected',
+      summary: `Rejected run_command on ${config.name}: command not allowlisted — "${command.slice(0, 80)}"`,
+    }).catch(() => {});
+    return `Error: Command "${trimmedCommand}" is not allowed. Only read-only diagnostic commands are permitted. Allowed prefixes: ${ALLOWED_COMMAND_PREFIXES.join(', ')}`;
+  }
+
+  // Execute the command
   let result;
   try {
     result = await ssh(target, command, { commandTimeout: timeout });
   } catch (err: any) {
+    emitServiceAction({
+      targetBot: bot,
+      action: 'run_command',
+      trigger: 'manual',
+      result: 'failed',
+      summary: `SSH connection failed to ${config.name}: ${err.message}`,
+    }).catch(() => {});
     return `Error: SSH connection failed to ${config.name}: ${err.message}`;
   }
 
@@ -284,5 +377,15 @@ export async function runCommand(
   }
 
   output += `exit code: ${result.exitCode}`;
+
+  // Emit telemetry (fire-and-forget)
+  emitServiceAction({
+    targetBot: bot,
+    action: 'run_command',
+    trigger: 'manual',
+    result: result.exitCode === 0 ? 'success' : 'failed',
+    summary: `run_command on ${config.name}: "${command.slice(0, 80)}" — exit ${result.exitCode}`,
+  }).catch(() => {});
+
   return output;
 }

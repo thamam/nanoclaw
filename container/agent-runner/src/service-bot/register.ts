@@ -8,6 +8,7 @@ import { createGitHubClient } from './github.js';
 import { botStatus, readLogs, readFile, listIssues } from './observe.js';
 import { searchLogs, inspectConfig } from './diagnose.js';
 import { editFile, dockerCommand, createIssue, runCommand } from './act.js';
+import { bashCommand } from './bash.js';
 import { runEvalStage, scoreEval, evalVerdictReport } from './eval.js';
 import { initRegistry, refreshConfigs } from './config.js';
 import { chubSearch, chubGet, chubExec } from './chub.js';
@@ -145,8 +146,37 @@ export async function registerServiceBotTools(
   );
 
   server.tool(
+    'bash',
+    'Run a shell command on a managed bot OR on X\'s own host (bot="self"), gated by permissions.yaml. Four tiers: deny (refused), password (requires passphrase), ask (prompts operator in-channel, 5-min timeout), allow (executes). Default-deny for unmatched commands. Unlike run_command, this supports pipes, redirects, and arbitrary commands — but every invocation is audited.',
+    {
+      bot: z.string().describe('Target: bot identifier (e.g. "db", "nook") OR "self" for X\'s own host (XPS)'),
+      command: z.string().describe('Shell command to execute'),
+      passphrase: z.string().optional().describe('Required when the matched tier is "password". Exact match, case-sensitive.'),
+      timeout: z.number().optional().describe('Command timeout in seconds (default 60, max 300)'),
+    },
+    async ({ bot, command, passphrase, timeout }) => {
+      const result = await bashCommand(bot, command, {
+        passphrase,
+        timeout,
+        ssh: sshExec,
+        github,
+      });
+      const lines = [
+        `tier: ${result.tier}`,
+        `decision: ${result.decision}`,
+      ];
+      if (result.reason) lines.push(`reason: ${result.reason}`);
+      if (result.exitCode !== undefined) lines.push(`exit code: ${result.exitCode}`);
+      if (result.stdout) lines.push(`stdout:\n${result.stdout}`);
+      if (result.stderr) lines.push(`stderr:\n${result.stderr}`);
+      if (result.auditIssueUrl) lines.push(`audit issue: ${result.auditIssueUrl}`);
+      return text(lines.join('\n'));
+    },
+  );
+
+  server.tool(
     'run_command',
-    'Run an arbitrary shell command on a managed bot host via SSH. The command is visible in the conversation.',
+    'Run a diagnostic shell command on a managed bot host via SSH. Only allowlisted read-only commands are permitted (systemctl status, journalctl, docker ps/logs, ls, cat, ps, etc.). Shell metacharacters are blocked.',
     {
       bot: z.string().describe('Bot identifier: "db" or "nook"'),
       command: z.string().describe('Shell command to execute'),

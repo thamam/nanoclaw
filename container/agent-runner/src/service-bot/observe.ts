@@ -1,9 +1,36 @@
 // Observe tools — read-only inspection of bot infrastructure.
 
-import { getBotConfig, MAX_LOG_LINES, MAX_FILE_SIZE } from './config.js';
+import { getBotConfig, getRegistry, MAX_LOG_LINES, MAX_FILE_SIZE } from './config.js';
 import type { SshExecutor } from './ssh.js';
 import { shellEscape } from './ssh.js';
 import type { GitHubClient } from './github.js';
+
+const TELEMETRY_TIMEOUT_MS = 5000;
+
+export interface BudgetUsage {
+  used: number;
+  limit: number;
+  pct: number;
+  level: string;
+}
+
+export interface BotBudgetSummary {
+  bot_id: string;
+  bot_name: string;
+  used: number;
+  limit: number;
+  pct: number;
+  level: string;
+}
+
+export interface BotBudgetDetail {
+  bot_id: string;
+  bot_name: string;
+  day: string;
+  budget: Record<string, unknown>;
+  usage: BudgetUsage;
+  circuit_breaker: { active: boolean; since?: string | null };
+}
 
 /**
  * Get the running status of a bot's container (and LettaBot service for nook).
@@ -164,4 +191,93 @@ export async function listIssues(
   });
 
   return `**${config.name}** Issues (${issues.length}):\n${lines.join('\n')}`;
+}
+
+/**
+ * Query budget status for a specific bot or all bots.
+ * Fetches from the telemetry API budget endpoints.
+ */
+export async function budgetStatus(
+  bot: string | undefined,
+  telemetryUrl: string,
+): Promise<string> {
+  const baseUrl = telemetryUrl.replace(/\/$/, '');
+
+  if (bot) {
+    // Single bot budget
+    const config = getBotConfig(bot);
+    const url = `${baseUrl}/api/bots/${encodeURIComponent(config.telemetryBotId)}/budget`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), TELEMETRY_TIMEOUT_MS);
+
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      if (res.status === 404) {
+        return `No budget configured for ${config.name}.`;
+      }
+      if (!res.ok) {
+        return `Error fetching budget for ${config.name}: HTTP ${res.status}`;
+      }
+      const data = (await res.json()) as BotBudgetDetail;
+      return formatBotBudget(data);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return `Error fetching budget for ${config.name}: ${msg}`;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  // Fleet summary
+  const url = `${baseUrl}/api/bots/budgets`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TELEMETRY_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) {
+      return `Error fetching fleet budgets: HTTP ${res.status}`;
+    }
+    const data = (await res.json()) as BotBudgetSummary[];
+    if (data.length === 0) {
+      return 'No bots have budget configured.';
+    }
+    return formatFleetBudgets(data);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return `Error fetching fleet budgets: ${msg}`;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function formatBotBudget(data: BotBudgetDetail): string {
+  const u = data.usage;
+  const levelIndicator = u.level === 'ok' ? '' : ` [${u.level.toUpperCase()}]`;
+  const lines = [
+    `**${data.bot_name}** Budget Status${levelIndicator}`,
+    `Day: ${data.day.split('T')[0]}`,
+    `Used: ${u.used.toLocaleString()} / ${u.limit.toLocaleString()} tokens (${u.pct}%)`,
+    `Level: ${u.level}`,
+  ];
+
+  if (data.circuit_breaker?.active) {
+    lines.push(`Circuit Breaker: ACTIVE (since ${data.circuit_breaker.since ?? 'unknown'})`);
+  }
+
+  return lines.join('\n');
+}
+
+function formatFleetBudgets(bots: BotBudgetSummary[]): string {
+  const header = 'Bot             | Used         | Limit        | Pct      | Level    ';
+  const sep    = '----------------|--------------|--------------|----------|----------';
+  const rows = bots.map((b) => {
+    const name = (b.bot_name.length > 15 ? b.bot_name.substring(0, 12) + '...' : b.bot_name).padEnd(15);
+    const used = b.used.toLocaleString().padStart(12);
+    const limit = b.limit.toLocaleString().padStart(12);
+    const pct = `${b.pct}%`.padStart(8);
+    const level = b.level.padEnd(9);
+    return `${name} | ${used} | ${limit} | ${pct} | ${level}`;
+  });
+  return `**Fleet Budget Status**\n${header}\n${sep}\n${rows.join('\n')}`;
 }

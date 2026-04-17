@@ -34,6 +34,14 @@ export interface ReadConversationsOptions {
 
 /**
  * Build the Python3 script that queries messages.db.
+ *
+ * All user-controlled values are passed via a base64-encoded JSON blob,
+ * decoded inside Python. This prevents Python string escape / SQL injection
+ * attacks — base64 is `[A-Za-z0-9+/=]` only, so it cannot break out of
+ * a Python string literal, shell quoting, or SSH transport.
+ *
+ * Inside Python, values go through `json.loads()` (safe) and then into
+ * parameterized SQLite queries (`?` placeholders).
  */
 function buildPythonScript(dbPath: string, options: {
   lines: number;
@@ -41,34 +49,45 @@ function buildPythonScript(dbPath: string, options: {
   channel?: string;
   search?: string;
 }): string {
-  const whereClauses: string[] = [
-    `m.timestamp >= datetime('now', '-${options.hours} hours')`,
-  ];
-
-  if (options.channel) {
-    whereClauses.push(`c.channel = '${options.channel}'`);
-  }
-
-  if (options.search) {
-    const escapedSearch = options.search.replace(/'/g, "''");
-    whereClauses.push(`m.content LIKE '%${escapedSearch}%'`);
-  }
-
-  const whereStr = whereClauses.join(' AND ');
+  const config = JSON.stringify({
+    db_path: dbPath,
+    hours: options.hours,
+    lines: options.lines,
+    channel: options.channel ?? null,
+    search: options.search ?? null,
+  });
+  const b64Config = Buffer.from(config).toString('base64');
 
   return `
-import sqlite3, os
-db_path = os.path.expanduser('${dbPath}')
+import sqlite3, os, json, base64
+
+config = json.loads(base64.b64decode('${b64Config}').decode())
+db_path = os.path.expanduser(config['db_path'])
 conn = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
 cursor = conn.cursor()
-cursor.execute("""
+
+where_clauses = ["m.timestamp >= datetime('now', '-' || ? || ' hours')"]
+params = [config['hours']]
+
+if config['channel']:
+    where_clauses.append("c.channel = ?")
+    params.append(config['channel'])
+
+if config['search']:
+    where_clauses.append("m.content LIKE '%' || ? || '%'")
+    params.append(config['search'])
+
+params.append(config['lines'])
+where_str = ' AND '.join(where_clauses)
+
+cursor.execute(f"""
   SELECT m.timestamp, c.channel, m.sender_name, m.is_from_me, m.content
   FROM messages m
   JOIN chats c ON m.chat_jid = c.jid
-  WHERE ${whereStr}
+  WHERE {where_str}
   ORDER BY m.timestamp DESC
-  LIMIT ${options.lines}
-""")
+  LIMIT ?
+""", params)
 rows = cursor.fetchall()
 conn.close()
 for row in rows:

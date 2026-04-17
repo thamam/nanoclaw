@@ -316,6 +316,20 @@ function buildContainerArgs(
   const githubToken = process.env.GITHUB_TOKEN || '';
   if (githubToken) {
     args.push('-e', 'GITHUB_TOKEN=' + githubToken);
+
+    // Service Bot: GitHub App credentials for org-level repo access (neuron-box)
+    const ghAppId = process.env.GITHUB_APP_ID || '';
+    const ghInstallationId = process.env.GITHUB_INSTALLATION_ID || '';
+    const ghPrivateKeyPath = process.env.GITHUB_PRIVATE_KEY_PATH || '';
+    if (ghAppId && ghInstallationId) {
+      args.push('-e', 'GITHUB_APP_ID=' + ghAppId);
+      args.push('-e', 'GITHUB_INSTALLATION_ID=' + ghInstallationId);
+      if (ghPrivateKeyPath) {
+        const containerKeyPath = '/workspace/extra/github-app-key.pem';
+        args.push('-v', ghPrivateKeyPath + ':' + containerKeyPath + ':ro');
+        args.push('-e', 'GITHUB_PRIVATE_KEY_PATH=' + containerKeyPath);
+      }
+    }
   }
 
   // Service Bot: SSH config path for tools that SSH to managed hosts

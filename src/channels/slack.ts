@@ -138,7 +138,11 @@ export class SlackChannel implements Channel {
         is_bot_message: isBotMessage,
       });
 
-      replyBus.emitReply({ channel: 'slack', userId: msg.user || msg.bot_id || '', text: msg.text || '' });
+      replyBus.emitReply({
+        channel: 'slack',
+        userId: msg.user || msg.bot_id || '',
+        text: msg.text || '',
+      });
 
       // Show thinking indicator for non-self messages (including other bots)
       if (!isFromMe && !this.thinkingMessages.has(jid)) {

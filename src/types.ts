@@ -94,6 +94,8 @@ export interface Channel {
   isConnected(): boolean;
   ownsJid(jid: string): boolean;
   disconnect(): Promise<void>;
+  // Optional: send voice/audio reply (mp3 buffer). Falls back to sendMessage if not implemented.
+  sendVoice?(jid: string, audioBuffer: Buffer, caption?: string): Promise<void>;
   // Optional: typing indicator. Channels that support it implement it.
   setTyping?(jid: string, isTyping: boolean): Promise<void>;
   // Optional: sync group/chat names from the platform.

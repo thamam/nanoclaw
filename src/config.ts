@@ -16,6 +16,9 @@ const envConfig = readEnvFile([
   'TELEMETRY_BOT_ID',
   'GROQ_API_KEY',
   'TELEGRAM_BOT_TOKEN',
+  'GITHUB_APP_ID',
+  'GITHUB_INSTALLATION_ID',
+  'GITHUB_PRIVATE_KEY_PATH',
 ]);
 
 // Service Bot: expose GITHUB_TOKEN to process.env so container-runner can pass it
@@ -52,6 +55,20 @@ if (envConfig.GROQ_API_KEY && !process.env.GROQ_API_KEY) {
 // Audio transcription: Telegram bot token for file downloads
 if (envConfig.TELEGRAM_BOT_TOKEN && !process.env.TELEGRAM_BOT_TOKEN) {
   process.env.TELEGRAM_BOT_TOKEN = envConfig.TELEGRAM_BOT_TOKEN;
+
+  // Service Bot: GitHub App credentials for org-level API access (neuron-box repos)
+  if (envConfig.GITHUB_APP_ID && !process.env.GITHUB_APP_ID) {
+    process.env.GITHUB_APP_ID = envConfig.GITHUB_APP_ID;
+  }
+  if (envConfig.GITHUB_INSTALLATION_ID && !process.env.GITHUB_INSTALLATION_ID) {
+    process.env.GITHUB_INSTALLATION_ID = envConfig.GITHUB_INSTALLATION_ID;
+  }
+  if (
+    envConfig.GITHUB_PRIVATE_KEY_PATH &&
+    !process.env.GITHUB_PRIVATE_KEY_PATH
+  ) {
+    process.env.GITHUB_PRIVATE_KEY_PATH = envConfig.GITHUB_PRIVATE_KEY_PATH;
+  }
 }
 
 export const ASSISTANT_NAME =
