@@ -35,48 +35,57 @@ export async function shouldRespondToGroup(
 
   const apiKey = getGroqKey();
   if (!apiKey) {
-    logger.error('smart-trigger: GROQ_API_KEY not found in .env or environment');
+    logger.error(
+      'smart-trigger: GROQ_API_KEY not found in .env or environment',
+    );
     return 'error';
   }
 
   try {
-    const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
+    const resp = await fetch(
+      'https://api.groq.com/openai/v1/chat/completions',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'llama-3.1-8b-instant',
+          max_tokens: 8,
+          temperature: 0,
+          messages: [
+            {
+              role: 'system',
+              content:
+                `You are ${assistantName}, an AI assistant in a group chat. ` +
+                'Decide if you should respond to the recent messages. ' +
+                'Respond YES if: (1) you are being addressed directly or indirectly, ' +
+                '(2) someone is asking a question you can answer, or ' +
+                '(3) you genuinely have something valuable to contribute. ' +
+                "Respond NO if the conversation doesn't involve you and you have " +
+                "nothing meaningful to add. Reply with ONLY 'YES' or 'NO'.",
+            },
+            { role: 'user', content: userContent },
+          ],
+        }),
       },
-      body: JSON.stringify({
-        model: 'llama-3.1-8b-instant',
-        max_tokens: 8,
-        temperature: 0,
-        messages: [
-          {
-            role: 'system',
-            content:
-              `You are ${assistantName}, an AI assistant in a group chat. ` +
-              'Decide if you should respond to the recent messages. ' +
-              'Respond YES if: (1) you are being addressed directly or indirectly, ' +
-              '(2) someone is asking a question you can answer, or ' +
-              '(3) you genuinely have something valuable to contribute. ' +
-              "Respond NO if the conversation doesn't involve you and you have " +
-              "nothing meaningful to add. Reply with ONLY 'YES' or 'NO'.",
-          },
-          { role: 'user', content: userContent },
-        ],
-      }),
-    });
+    );
 
     if (!resp.ok) {
       const errorBody = await resp.text();
-      throw new Error(`Groq API ${resp.status}: ${errorBody.substring(0, 200)}`);
+      throw new Error(
+        `Groq API ${resp.status}: ${errorBody.substring(0, 200)}`,
+      );
     }
 
     const data = (await resp.json()) as {
       choices: Array<{ message: { content: string } }>;
     };
     const text = data.choices?.[0]?.message?.content?.trim() ?? '';
-    const decision: TriggerDecision = text.toUpperCase().startsWith('YES') ? 'yes' : 'no';
+    const decision: TriggerDecision = text.toUpperCase().startsWith('YES')
+      ? 'yes'
+      : 'no';
 
     logger.info(
       { response: text, decision, messageCount: recent.length },

@@ -17,9 +17,9 @@ export type ChannelKind = 'telegram' | 'slack' | string;
 
 export interface ReplyEvent {
   channel: ChannelKind;
-  userId: string;      // stringified user ID (Telegram number or Slack U...)
+  userId: string; // stringified user ID (Telegram number or Slack U...)
   text: string;
-  raw?: unknown;       // optional original payload, for debug
+  raw?: unknown; // optional original payload, for debug
 }
 
 class ReplyBus extends EventEmitter {

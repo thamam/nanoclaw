@@ -146,6 +146,9 @@ export function populateCrossChannelContext(
       'cross-channel: context refreshed',
     );
   } catch (err) {
-    logger.warn({ err, contextFile }, 'cross-channel: failed to write context file');
+    logger.warn(
+      { err, contextFile },
+      'cross-channel: failed to write context file',
+    );
   }
 }

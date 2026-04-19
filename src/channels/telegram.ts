@@ -299,7 +299,11 @@ export function createTelegramChannel(opts: ChannelOpts): Channel | null {
         is_bot_message: isFromMe,
       };
       opts.onMessage(jid, newMsg);
-      replyBus.emitReply({ channel: 'telegram', userId: String(from.id), text: messageContent });
+      replyBus.emitReply({
+        channel: 'telegram',
+        userId: String(from.id),
+        text: messageContent,
+      });
       return;
     }
 
@@ -315,7 +319,11 @@ export function createTelegramChannel(opts: ChannelOpts): Channel | null {
     };
 
     opts.onMessage(jid, newMsg);
-    replyBus.emitReply({ channel: 'telegram', userId: String(from.id), text: messageContent });
+    replyBus.emitReply({
+      channel: 'telegram',
+      userId: String(from.id),
+      text: messageContent,
+    });
 
     // Show early thinking indicator for messages that will trigger the agent
     if (!isFromMe && TRIGGER_PATTERN.test(content)) {
@@ -356,8 +364,11 @@ export function createTelegramChannel(opts: ChannelOpts): Channel | null {
     async sendVoice(jid: string, audioBuffer: Buffer): Promise<void> {
       if (!connected) return;
       const chatId = extractChatId(jid);
-      const { Input } = await import("telegraf");
-      await bot.telegram.sendVoice(chatId, Input.fromBuffer(audioBuffer, "voice.mp3"));
+      const { Input } = await import('telegraf');
+      await bot.telegram.sendVoice(
+        chatId,
+        Input.fromBuffer(audioBuffer, 'voice.mp3'),
+      );
     },
 
     async sendMessage(jid: string, text: string): Promise<void> {
