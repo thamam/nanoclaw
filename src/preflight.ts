@@ -42,7 +42,9 @@ export async function validateGroqKey(): Promise<PreflightResult> {
     // No key configured — this is a config gap, not a runtime failure.
     // Warn and continue; smart-trigger will log per-call if anyone
     // tries to use it.
-    logger.warn('preflight: GROQ_API_KEY not configured — smart-trigger groups will be disabled');
+    logger.warn(
+      'preflight: GROQ_API_KEY not configured — smart-trigger groups will be disabled',
+    );
     return { ok: true };
   }
 
@@ -58,7 +60,10 @@ export async function validateGroqKey(): Promise<PreflightResult> {
     }
     return { ok: true };
   } catch (err) {
-    logger.warn({ err }, 'preflight: Groq probe failed (transient) — booting anyway');
+    logger.warn(
+      { err },
+      'preflight: Groq probe failed (transient) — booting anyway',
+    );
     return { ok: true };
   } finally {
     clearTimeout(timer);
