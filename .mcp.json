@@ -6,6 +6,14 @@
       "args": [
         "@playwright/mcp@latest"
       ]
+    },
+    "fleet-host": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/workspace/global/mcp-socket-bridge.js",
+        "/tmp/fleet-host-mcp.sock"
+      ]
     }
   }
 }
