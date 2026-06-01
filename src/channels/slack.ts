@@ -1,5 +1,7 @@
 import { App, LogLevel } from '@slack/bolt';
 import type { GenericMessageEvent, BotMessageEvent } from '@slack/types';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { updateChatName } from '../db.js';
@@ -17,6 +19,22 @@ import {
 // Slack's chat.postMessage API limits text to ~4000 characters per call.
 // Messages exceeding this are split into sequential chunks.
 const MAX_MESSAGE_LENGTH = 4000;
+// Approval-bridge inbox: written by the protocol-exception filter below, read
+// by fleet-host-mcp's permission_gate.py as a deterministic in-process
+// approval channel. Replaces the previous "drop and hope the gate polls Slack"
+// approach that was fragile across bot-identity / DM-channel-ID mismatches.
+// Format: ${APPROVAL_INBOX_DIR}/${request_id}.json (one file per decision).
+const APPROVAL_INBOX_DIR =
+  process.env.FLEET_HOST_MCP_APPROVAL_INBOX ??
+  `${process.env.HOME ?? '/home/thh3'}/.local/state/fleet-host-mcp/approvals`;
+
+
+// Protocol exception: messages matching `(approve|deny) req-...` are owned by
+// fleet-host-mcp's permission gate, which currently shares this DM channel
+// with us via the relay-bot identity. Drop them silently so they reach the
+// gate's polling logic instead of generating chat responses.
+// Long-term fix: gate should use its own bot identity, not piggyback on us.
+const APPROVAL_PROTOCOL_PATTERN = /^(approve|deny)\s+(req-[\w-]+)\b/i;
 
 // The message subtypes we process. Bolt delivers all subtypes via app.event('message');
 // we filter to regular messages (GenericMessageEvent, subtype undefined) and bot messages
@@ -81,6 +99,44 @@ export class SlackChannel implements Channel {
       const msg = event as HandledMessageEvent;
 
       if (!msg.text) return;
+
+      // Approval-protocol messages: bridge to fleet-host-mcp's inbox AND drop
+      // from the bot-chat path. The inbox file is what the gate now consumes
+      // (no longer relying on Slack-DM-polling that was fragile across bot
+      // identities / DM channel ID mismatches).
+      const __trimmedText = msg.text.trim();
+      const __approvalMatch = __trimmedText.match(APPROVAL_PROTOCOL_PATTERN);
+      if (__approvalMatch) {
+        const decision = __approvalMatch[1].toLowerCase();
+        const requestId = __approvalMatch[2];
+        const afterId = __trimmedText.slice(__approvalMatch[0].length).replace(/^\s*[:\-—]\s*/, '').trim();
+        try {
+          fs.mkdirSync(APPROVAL_INBOX_DIR, { recursive: true, mode: 0o700 });
+          const payload = {
+            request_id: requestId,
+            decision,
+            decided_by: (msg as { user?: string }).user ?? '',
+            ts: new Date().toISOString(),
+            slack_channel: msg.channel,
+            slack_ts: msg.ts,
+            reason: afterId,
+          };
+          const finalPath = path.join(APPROVAL_INBOX_DIR, `${requestId}.json`);
+          const tmpPath = `${finalPath}.tmp.${process.pid}`;
+          fs.writeFileSync(tmpPath, JSON.stringify(payload) + '\n', { mode: 0o600 });
+          fs.renameSync(tmpPath, finalPath);
+          logger.info(
+            { jid: `slack:${msg.channel}`, ts: msg.ts, requestId, decision },
+            'approval bridged to fleet-host-mcp inbox',
+          );
+        } catch (err) {
+          logger.error(
+            { err: (err as Error).message, requestId, decision },
+            'approval bridge write failed — falling back to Slack-poll path',
+          );
+        }
+        return;
+      }
 
       // Threaded replies are flattened into the channel conversation.
       // The agent sees them alongside channel-level messages; responses
