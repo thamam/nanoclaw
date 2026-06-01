@@ -1,7 +1,6 @@
 # NanoClaw Agent Container
 # Runs Claude Agent SDK in isolated Linux VM
 # Service Bot mode: SSH-based tools + Playwright MCP for headless browsing
-
 FROM node:22-slim
 
 # Install system dependencies
@@ -38,15 +37,12 @@ RUN npm run build
 RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/messages /workspace/ipc/tasks /workspace/ipc/input
 
 # Create entrypoint script
-# Container input (prompt, group info) is passed via stdin JSON.
-# Credentials are injected by the host's credential proxy — never passed here.
-# Follow-up messages arrive via IPC files in /workspace/ipc/input/
-# Create entrypoint script
 # - Dynamic uid mapping: adds current uid to /etc/passwd if missing (needed for SSH)
+# - SSH alias setup: symlinks the mounted service-ssh config + key to ~/.ssh so `ssh rog` works bare
 # - Container input (prompt, group info) is passed via stdin JSON.
 # - Credentials are injected by the host's credential proxy — never passed here.
 # - Follow-up messages arrive via IPC files in /workspace/ipc/input/
-RUN printf '#!/bin/bash\nset -e\n# Dynamic uid mapping for SSH (container may run as host uid != 1000)\nif ! getent passwd "$(id -u)" >/dev/null 2>&1; then\n  echo "nanoclaw:x:$(id -u):$(id -g):NanoClaw Agent:/home/node:/bin/bash" >> /etc/passwd 2>/dev/null || true\nfi\ncd /app && npx tsc --outDir /tmp/dist 2>&1 >&2\nln -s /app/node_modules /tmp/dist/node_modules\nchmod -R a-w /tmp/dist\ncat > /tmp/input.json\nnode /tmp/dist/index.js < /tmp/input.json\n' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
+RUN printf '#!/bin/bash\nset -e\n# Dynamic uid mapping for SSH (container may run as host uid != 1000)\nif ! getent passwd "$(id -u)" >/dev/null 2>&1; then\n  echo "nanoclaw:x:$(id -u):$(id -g):NanoClaw Agent:/home/node:/bin/bash" >> /etc/passwd 2>/dev/null || true\nfi\n# SSH alias setup (Dispatch 2026-06-01): make `ssh rog` / `ssh ec2-db` work bare by\n# copying the mounted service-ssh config + key into $HOME/.ssh (ssh refuses to read\n# a config file it does not own, so a symlink to the read-only mount is rejected\n# with "Bad owner or permissions" — we copy + chmod 600 instead).\n# Service key is enforced server-side via /usr/local/bin/nanoclaw-ssh-gate\n# (read-only ops auto-OK, mutating ops require approval, destructive ops blocked).\nif [ -d /workspace/extra/service-ssh ]; then\n  mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"\n  cp /workspace/extra/service-ssh/config "$HOME/.ssh/config" 2>/dev/null || true\n  cp /workspace/extra/service-ssh/service_key "$HOME/.ssh/service_key" 2>/dev/null || true\n  chmod 600 "$HOME/.ssh/config" "$HOME/.ssh/service_key" 2>/dev/null || true\nfi\ncd /app && npx tsc --outDir /tmp/dist 2>&1 >&2\nln -s /app/node_modules /tmp/dist/node_modules\nchmod -R a-w /tmp/dist\ncat > /tmp/input.json\nnode /tmp/dist/index.js < /tmp/input.json\n' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 # Make /etc/passwd writable by all so dynamic uid mapping works at runtime
 RUN chmod 666 /etc/passwd
@@ -60,5 +56,5 @@ USER node
 # Set working directory to group workspace
 WORKDIR /workspace/group
 
-# Entry point reads JSON from stdin, outputs JSON to stdout
+# Entry point reads JSON from stdin, outputs JSON to stdoutENTRYPOINT
 ENTRYPOINT ["/app/entrypoint.sh"]
